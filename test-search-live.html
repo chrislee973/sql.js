@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SQL.js Live Search with FTS5</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .download-btn {
+            margin: 20px 0;
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .download-btn:hover {
+            background-color: #45a049;
+        }
+        .search-container {
+            margin: 20px 0;
+        }
+        #searchInput {
+            padding: 10px;
+            width: 70%;
+            font-size: 16px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        #searchButton {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        #searchButton:hover {
+            background-color: #0b7dda;
+        }
+        .result-item {
+            margin: 10px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+        }
+        .result-title {
+            font-weight: bold;
+            font-size: 18px;
+            margin-bottom: 5px;
+        }
+        .result-body {
+            color: #555;
+        }
+        .highlight {
+            background-color: yellow;
+            font-weight: bold;
+        }
+        #queryTime {
+            margin: 10px 0;
+            padding: 5px 10px;
+            font-size: 14px;
+            background-color: #f0f0f0;
+            border-left: 3px solid #2196F3;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <h1>SQL.js Live Search with FTS5</h1>
+    
+    <div class="search-container">
+        <input type="text" id="searchInput" placeholder="Enter search term and click Search">
+        <button id="searchButton">Search</button>
+    </div>
+    
+    <div id="status"></div>
+    <div id="queryTime"></div>
+    <div id="searchResults"></div>
+    <button id="downloadDb" class="download-btn" style="display: none;">Download Database</button>
+
+    <script>
+        // Global database variable
+        let db;
+        
+        // Debounce function to limit how often the search is triggered while typing
+        function debounce(func, wait) {
+            let timeout;
+            return function(...args) {
+                const context = this;
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(context, args), wait);
+            };
+        }
+        
+        // Helper function to display status
+        function displayStatus(text) {
+            const status = document.getElementById('status');
+            status.innerHTML = `<p>${text}</p>`;
+        }
+
+        // Helper function to download the database
+        function downloadDatabase() {
+            if (!db) return;
+            
+            const data = db.export();
+            const blob = new Blob([data], { type: 'application/x-sqlite3' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'search-database.sqlite';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // Function to display search results
+        function displayResults(results) {
+            const searchResults = document.getElementById('searchResults');
+            searchResults.innerHTML = '';
+            
+            if (!results || results.length === 0 || !results[0].values || results[0].values.length === 0) {
+                searchResults.innerHTML = '<p>No results found.</p>';
+                return;
+            }
+            
+            const searchTerm = document.getElementById('searchInput').value.trim();
+            
+            // Extract column names from the results
+            const columns = results[0].columns;
+            const titleIndex = columns.indexOf('title');
+            const bodyIndex = columns.indexOf('body');
+            
+            // Create result items
+            results[0].values.forEach(row => {
+                const title = row[titleIndex];
+                const body = row[bodyIndex];
+                
+                const resultItem = document.createElement('div');
+                resultItem.className = 'result-item';
+                
+                // Highlight matching prefixes in title and body if present
+                let highlightedTitle = title;
+                let highlightedBody = body;
+                
+                if (searchTerm) {
+                    // Create a regex that matches the prefix pattern
+                    const prefixRegex = new RegExp(`\\b${searchTerm}\\w*`, 'gi');
+                    highlightedTitle = title.replace(prefixRegex, match => `<span class="highlight">${match}</span>`);
+                    highlightedBody = body.replace(prefixRegex, match => `<span class="highlight">${match}</span>`);
+                }
+                
+                resultItem.innerHTML = `
+                    <div class="result-title">${highlightedTitle}</div>
+                    <div class="result-body">${highlightedBody}</div>
+                `;
+                
+                searchResults.appendChild(resultItem);
+            });
+        }
+
+        // Function to perform search
+        function performSearch() {
+            if (!db) {
+                displayStatus('Database not ready yet. Please wait...');
+                return;
+            }
+            
+            const searchTerm = document.getElementById('searchInput').value.trim();
+            const queryTimeElement = document.getElementById('queryTime');
+            queryTimeElement.innerHTML = '';
+            
+            if (!searchTerm) {
+                // If search is empty, show all articles
+                try {
+                    const startTime = performance.now();
+                    const allResults = db.exec('SELECT rowid, title, body FROM articles ORDER BY title');
+                    const endTime = performance.now();
+                    const queryTime = endTime - startTime;
+                    
+                    queryTimeElement.innerHTML = `<p>Query execution time: ${queryTime.toFixed(2)} ms</p>`;
+                    displayResults(allResults);
+                } catch (err) {
+                    displayStatus('Error retrieving articles: ' + err.message);
+                    console.error(err);
+                }
+                return;
+            }
+            
+            try {
+                // Perform FTS5 search with prefix matching using the * wildcard
+                const prefixSearchTerm = `${searchTerm}*`;
+                
+                const startTime = performance.now();
+                const results = db.exec(`
+                    SELECT rowid, title, body FROM articles 
+                    WHERE articles MATCH ? 
+                    ORDER BY rank
+                `, [prefixSearchTerm]);
+                const endTime = performance.now();
+                const queryTime = endTime - startTime;
+                
+                queryTimeElement.innerHTML = `<p>Query execution time: ${queryTime.toFixed(2)} ms</p>`;
+                displayResults(results);
+            } catch (err) {
+                displayStatus('Search error: ' + err.message);
+                console.error(err);
+            }
+        }
+
+        // Initialize database and populate with example data
+        async function initDatabase() {
+            try {
+                displayStatus('Loading SQL.js...');
+                
+                // Initialize SQL.js with the correct path to wasm file
+                const SQL = await initSqlJs({
+                    locateFile: file => `./dist/${file}`
+                });
+                displayStatus('SQL.js loaded successfully!');
+
+                // Create a database
+                db = new SQL.Database();
+                displayStatus('Created an in-memory database');
+
+                // Create FTS5 virtual table
+                db.run(`
+                    CREATE VIRTUAL TABLE articles USING fts5(
+                        title,
+                        body
+                    );
+                `);
+                displayStatus('Created FTS5 virtual table');
+
+                // Insert example data
+                db.run(`
+                    INSERT INTO articles (title, body) VALUES
+                    ('Introduction to SQL', 'SQL (Structured Query Language) is a standard language for storing, manipulating, and retrieving data in databases. SQL statements are used to perform tasks such as update data or retrieve data from a database.'),
+                    ('JavaScript Fundamentals', 'JavaScript is a programming language commonly used for web development. It allows you to implement complex features on web pages like interactive maps, animated graphics, and more.'),
+                    ('Python for Beginners', 'Python is a popular programming language. It was created by Guido van Rossum and released in 1991. It is used for web development, software development, mathematics, system scripting, and more.'),
+                    ('Web Development Basics', 'Web development refers to building, creating, and maintaining websites. It includes aspects such as web design, web publishing, web programming, and database management.'),
+                    ('Database Design Principles', 'Good database design is crucial for building scalable and efficient applications. It involves normalization, indexing strategies, and choosing the right data types.'),
+                    ('Machine Learning Introduction', 'Machine learning is a method of data analysis that automates analytical model building. It is a branch of artificial intelligence based on the idea that systems can learn from data.'),
+                    ('HTML and CSS Basics', 'HTML (Hypertext Markup Language) is the standard markup language for documents designed to be displayed in a web browser. CSS (Cascading Style Sheets) is used to style and layout web pages.'),
+                    ('Mobile App Development', 'Mobile app development involves creating applications that run on mobile devices. It requires considering screen sizes, hardware specifications, and various configurations.'),
+                    ('Cloud Computing Services', 'Cloud computing is the delivery of computing services over the internet. Services include servers, storage, databases, networking, software, and analytics.'),
+                    ('Cybersecurity Best Practices', 'Cybersecurity involves protecting systems, networks, and programs from digital attacks. These attacks often aim to access, change, or destroy sensitive information.')
+                `);
+                displayStatus('Database populated with example data');
+
+                // Show all articles initially
+                const initialResults = db.exec('SELECT rowid, title, body FROM articles ORDER BY title');
+                displayResults(initialResults);
+
+                // Show download button
+                const downloadBtn = document.getElementById('downloadDb');
+                downloadBtn.style.display = 'block';
+                downloadBtn.onclick = downloadDatabase;
+
+                // Setup search button (kept for accessibility)
+                document.getElementById('searchButton').addEventListener('click', performSearch);
+                
+                // Setup enter key in search input
+                document.getElementById('searchInput').addEventListener('keyup', function(event) {
+                    if (event.key === 'Enter') {
+                        performSearch();
+                    }
+                });
+
+                displayStatus('Ready to search! Enter a term and click Search.');
+            } catch (err) {
+                displayStatus('Error: ' + err.message);
+                console.error(err);
+            }
+        }
+    </script>
+
+    <!-- Load sql.js -->
+    <script src="./dist/sql-wasm.js"></script>
+    <script>
+        // Start initialization after page loads
+        window.addEventListener('load', initDatabase);
+    </script>
+</body>
+</html> 

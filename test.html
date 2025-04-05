@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SQL.js Test with FTS5</title>
+    <style>
+        .download-btn {
+            margin: 20px 0;
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .download-btn:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <h1>SQL.js Test with FTS5</h1>
+    <button id="downloadDb" class="download-btn" style="display: none;">Download Database</button>
+    <div id="output"></div>
+
+    <script>
+        // Helper function to display results
+        function displayResult(text) {
+            const output = document.getElementById('output');
+            output.innerHTML += `<p>${text}</p>`;
+        }
+
+        // Helper function to download the database
+        function downloadDatabase(db) {
+            const data = db.export();
+            const blob = new Blob([data], { type: 'application/x-sqlite3' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'test-database.sqlite';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // Load sql.js
+        async function runTest() {
+            try {
+                displayResult('Loading SQL.js...');
+                
+                // Initialize SQL.js with the correct path to wasm file
+                const SQL = await initSqlJs({
+                    locateFile: file => `./dist/${file}`
+                });
+                displayResult('SQL.js loaded successfully!');
+
+                // Create a database
+                const db = new SQL.Database();
+                displayResult('Created an in-memory database');
+
+                // Basic table test
+                displayResult('Testing basic SQL functionality...');
+                db.run('CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT);');
+                db.run('INSERT INTO test (name) VALUES (?), (?)', ['Alice', 'Bob']);
+                const basicResult = db.exec('SELECT * FROM test');
+                displayResult('Basic test result: ' + JSON.stringify(basicResult[0], null, 2));
+
+                // FTS5 test
+                displayResult('Testing FTS5 functionality...');
+                
+                // Create a virtual table using FTS5
+                db.run(`
+                    CREATE VIRTUAL TABLE articles USING fts5(
+                        title,
+                        body
+                    );
+                `);
+                displayResult('Created FTS5 virtual table');
+
+                // Insert some test documents
+                db.run(`
+                    INSERT INTO articles (title, body) VALUES
+                    ('SQL Tutorial', 'Learn SQL basics and advanced features. SQL is a powerful database language.'),
+                    ('JavaScript Guide', 'JavaScript is a programming language for the web. It makes websites interactive.'),
+                    ('Database Design', 'Good database design is crucial for SQL performance and maintainability.');
+                `);
+                displayResult('Inserted test documents');
+
+                // Perform some FTS5 searches
+                displayResult('Testing FTS5 searches...');
+
+                // Search for 'SQL' in both title and body
+                const sqlSearch = db.exec(`
+                    SELECT * FROM articles 
+                    WHERE articles MATCH 'SQL'
+                    ORDER BY rank;
+                `);
+                displayResult('Search results for "SQL": ' + JSON.stringify(sqlSearch[0], null, 2));
+
+                // Search for documents containing 'database'
+                const dbSearch = db.exec(`
+                    SELECT * FROM articles 
+                    WHERE articles MATCH 'database'
+                    ORDER BY rank;
+                `);
+                displayResult('Search results for "database": ' + JSON.stringify(dbSearch[0], null, 2));
+
+                // Test phrase search
+                const phraseSearch = db.exec(`
+                    SELECT * FROM articles 
+                    WHERE articles MATCH '"database design"'
+                    ORDER BY rank;
+                `);
+                displayResult('Search results for phrase "database design": ' + JSON.stringify(phraseSearch[0], null, 2));
+
+                displayResult('All tests passed! 🎉');
+
+                // Show and setup download button
+                const downloadBtn = document.getElementById('downloadDb');
+                downloadBtn.style.display = 'block';
+                downloadBtn.onclick = () => downloadDatabase(db);
+
+            } catch (err) {
+                displayResult('Error: ' + err.message);
+                console.error(err);
+            }
+        }
+    </script>
+
+    <!-- Load sql.js -->
+    <script src="./dist/sql-wasm.js"></script>
+    <script>
+        // Start the test after everything is loaded
+        window.addEventListener('load', runTest);
+    </script>
+</body>
+</html> 
