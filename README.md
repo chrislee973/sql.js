@@ -8,6 +8,40 @@
 
 *sql.js* is a javascript SQL database. It allows you to create a relational database and query it entirely in the browser. You can try it in [this online demo](https://sql.js.org/examples/GUI/). It uses a [virtual database file stored in memory](https://emscripten.org/docs/porting/files/file_systems_overview.html), and thus **doesn't persist the changes** made to the database. However, it allows you to **import** any existing sqlite file, and to **export** the created database as a [JavaScript typed array](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Typed_arrays).
 
+## FTS5-enabled Fork
+
+This fork of sql.js includes the FTS5 (Full-Text Search) extension, which is disabled in the default sql.js build. Instructions:
+
+1. Download the fts-enabled build from this repo's [Releases page](https://github.com/chrislee973/sql.js/releases):
+   - `sql-wasm.js`
+   - `sql-wasm.wasm`
+   
+2. Include them in your project:
+```javascript
+<script src="path/to/sql-wasm.js"></script>
+<script>
+  // Initialize with path to wasm file
+  initSqlJs({
+    locateFile: file => `path/to/${file}`
+  }).then(SQL => {
+    const db = new SQL.Database();
+    
+    // Create an FTS5 virtual table
+    db.run(`
+      CREATE VIRTUAL TABLE docs USING fts5(title, body);
+      INSERT INTO docs VALUES 
+        ('Hello', 'This is a sample document'),
+        ('World', 'Another sample document');
+    `);
+
+    // Perform full-text search
+    const results = db.exec("SELECT * FROM docs WHERE docs MATCH 'sample'");
+  });
+</script>
+```
+
+All other sql.js functionality remains unchanged.
+
 *sql.js* uses [emscripten](https://emscripten.org/docs/introducing_emscripten/about_emscripten.html) to compile [SQLite](http://sqlite.org/about.html) to webassembly (or to javascript code for compatibility with older browsers). It includes [contributed math and string extension functions](https://www.sqlite.org/contrib?orderby=date).
 
 sql.js can be used like any traditional JavaScript library. If you are building a native application in JavaScript (using Electron for instance), or are working in node.js, you will likely prefer to use [a native binding of SQLite to JavaScript](https://www.npmjs.com/package/sqlite3). A native binding will not only be faster because it will run native code, but it will also be able to work on database files directly instead of having to load the entire database in memory, avoiding out of memory errors and further improving performances.
